@@ -1,4 +1,4 @@
-module text-editor
+module gollaborate
 
 go 1.23.2
 
