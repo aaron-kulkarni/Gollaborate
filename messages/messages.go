@@ -100,10 +100,11 @@ func NewSyncMessage(doc *crdt.Document, userID int) *Message {
 }
 
 // NewInitMessage creates a new init message for new client connections
-func NewInitMessage(doc *crdt.Document) *Message {
+func NewInitMessage(doc *crdt.Document, userID int) *Message {
 	return &Message{
 		Type:     MessageTypeInit,
 		Document: doc,
+		UserID:   userID,
 	}
 }
 
@@ -228,8 +229,8 @@ func SendSync(conn net.Conn, doc *crdt.Document, userID int) error {
 }
 
 // SendInit is a convenience function to send an init message
-func SendInit(conn net.Conn, doc *crdt.Document) error {
-	msg := NewInitMessage(doc)
+func SendInit(conn net.Conn, doc *crdt.Document, userID int) error {
+	msg := NewInitMessage(doc, userID)
 	return SendMessage(conn, msg)
 }
 
