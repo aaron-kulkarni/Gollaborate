@@ -10,7 +10,7 @@ func main() {
 
 	port := ":49874"
 
-	// Listen on all interfaces on port 8080
+	// Listen on all interfaces on port
 	ln, err := net.Listen("tcp", port)
 	if err != nil {
 		fmt.Println("Error starting server:", err)
