@@ -14,7 +14,7 @@ import (
 	"gollaborate/crdt"
 	"gollaborate/messages"
 	"gollaborate/shared"
-	"gollaborate/tui/core"
+	core "gollaborate/tui"
 )
 
 var (
