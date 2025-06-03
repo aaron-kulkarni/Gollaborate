@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 set APP_NAME=gollaborate.exe
 
-echo Building Gollaborate (Decentralized Collaborative Editor)...
+echo Building Gollaborate TUI (Decentralized Collaborative Editor)...
 
 REM Clean previous builds
 echo Cleaning previous builds...
@@ -11,7 +11,7 @@ if exist %APP_NAME% del %APP_NAME%
 
 REM Build main executable
 echo Building executable...
-go build -o %APP_NAME% peer\main.go
+go build -o %APP_NAME% main.go
 
 if errorlevel 1 (
     echo Build failed!
@@ -22,11 +22,14 @@ echo Build complete!
 echo Executable: %APP_NAME%
 
 echo.
-echo To run (listening on port 49874):
-echo   %APP_NAME% -listen 127.0.0.1:49874
+echo To run (listening on port 8080):
+echo   %APP_NAME% --port 8080
 echo.
 echo To connect to other instances:
-echo   %APP_NAME% -listen 127.0.0.1:49875 -peers 127.0.0.1:49874
+echo   %APP_NAME% --port 8081 --join 127.0.0.1:8080
+echo.
+echo To load a file:
+echo   %APP_NAME% --port 8080 --file document.txt
 echo.
 echo You can open multiple terminals and run on different ports, connecting them as desired.
 echo.

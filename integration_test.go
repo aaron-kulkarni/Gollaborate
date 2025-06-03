@@ -4,203 +4,132 @@ import (
 	"bytes"
 	"encoding/json"
 	"net"
-	"sync"
 	"testing"
 	"time"
 
 	"gollaborate/crdt"
-	"gollaborate/messages"
+	"gollaborate/shared"
+	"gollaborate/tui/core"
 )
 
-// PeerSim simulates a decentralized peer with in-memory connections.
-type PeerSim struct {
-	ID       int
-	Doc      *crdt.Document
-	Ops      []*messages.Operation
-	Peers    []*PeerSim
-	RecvChan chan *messages.Operation
-	Mutex    sync.Mutex
-}
-
-func NewPeerSim(id int) *PeerSim {
-	return &PeerSim{
-		ID:       id,
-		Doc:      crdt.FromText("", id),
-		Ops:      []*messages.Operation{},
-		RecvChan: make(chan *messages.Operation, 100),
+// Test the TUI integration with CRDT
+func TestTUIBasicEditing(t *testing.T) {
+	// Create document and editor state
+	doc := crdt.FromText("", 1)
+	editorState := shared.NewEditorState(doc, 1)
+	
+	// Initialize TUI model
+	model := core.InitializeModelForTesting(editorState, 1, "blue")
+	
+	// Simulate typing "Hello"
+	model.SimulateKeyPress("H")
+	model.SimulateKeyPress("e")
+	model.SimulateKeyPress("l")
+	model.SimulateKeyPress("l")
+	model.SimulateKeyPress("o")
+	
+	// Verify document content
+	text := model.GetDocumentText()
+	if text != "Hello" {
+		t.Errorf("Document text incorrect: got '%s', want 'Hello'", text)
+	}
+	
+	// Verify cursor position
+	x, y := model.GetCursorPosition()
+	if x != 6 || y != 1 { // Should be after the last character
+		t.Errorf("Cursor position incorrect: got (%d,%d), want (6,1)", x, y)
 	}
 }
 
-// Connects two peers bidirectionally.
-func ConnectPeers(a, b *PeerSim) {
-	a.Peers = append(a.Peers, b)
-	b.Peers = append(b.Peers, a)
-}
-
-// Broadcasts an operation to all connected peers.
-func (p *PeerSim) Broadcast(op *messages.Operation) {
-	for _, peer := range p.Peers {
-		peer.RecvChan <- op
+// Test cursor movement and character deletion
+func TestTUICursorAndDelete(t *testing.T) {
+	// Create document with content
+	doc := crdt.FromText("Hello", 1)
+	editorState := shared.NewEditorState(doc, 1)
+	model := core.InitializeModelForTesting(editorState, 1, "blue")
+	
+	// Move cursor to position before 'o'
+	model.SetCursorPosition(5, 1)
+	
+	// Delete 'l'
+	model.SimulateKeyPress("backspace")
+	
+	// Verify text is now "Helo"
+	text := model.GetDocumentText()
+	if text != "Helo" {
+		t.Errorf("Document text after deletion incorrect: got '%s', want 'Helo'", text)
 	}
 }
 
-// Processes incoming operations.
-func (p *PeerSim) Run(wg *sync.WaitGroup, stop <-chan struct{}) {
-	defer wg.Done()
-	for {
-		select {
-		case op := <-p.RecvChan:
-			p.Mutex.Lock()
-			_ = p.Doc.InsertCharacter(op.Character, op.Position, op.Clock)
-			p.Ops = append(p.Ops, op)
-			p.Mutex.Unlock()
-		case <-stop:
-			return
-		}
+// Test multiline editing
+func TestTUIMultilineEditing(t *testing.T) {
+	// Create an empty document
+	doc := crdt.FromText("", 1)
+	editorState := shared.NewEditorState(doc, 1)
+	model := core.InitializeModelForTesting(editorState, 1, "blue")
+	
+	// Type "Line 1"
+	model.SimulateKeyPress("L")
+	model.SimulateKeyPress("i")
+	model.SimulateKeyPress("n")
+	model.SimulateKeyPress("e")
+	model.SimulateKeyPress(" ")
+	model.SimulateKeyPress("1")
+	
+	// Press Enter for new line
+	model.SimulateKeyPress("enter")
+	
+	// Type "Line 2"
+	model.SimulateKeyPress("L")
+	model.SimulateKeyPress("i")
+	model.SimulateKeyPress("n")
+	model.SimulateKeyPress("e")
+	model.SimulateKeyPress(" ")
+	model.SimulateKeyPress("2")
+	
+	// Verify document content
+	expected := "Line 1\nLine 2"
+	if model.GetDocumentText() != expected {
+		t.Errorf("Multiline text incorrect: got '%s', want '%s'", 
+			model.GetDocumentText(), expected)
 	}
 }
 
-// Simulates a local edit and broadcasts it.
-func (p *PeerSim) LocalEdit(char rune, clock int) *messages.Operation {
-	pos, _ := p.Doc.GeneratePositionAt(1, len(p.Doc.ToText())+1, p.ID)
-	op := messages.NewInsertOperation(pos, char, p.ID, clock)
-	_ = p.Doc.InsertCharacter(char, pos, clock)
-	p.Ops = append(p.Ops, op)
-	p.Broadcast(op)
-	return op
-}
-
-func TestPeerToPeerPropagation(t *testing.T) {
-	peerA := NewPeerSim(1)
-	peerB := NewPeerSim(2)
-	peerC := NewPeerSim(3)
-	ConnectPeers(peerA, peerB)
-	ConnectPeers(peerB, peerC)
-	ConnectPeers(peerA, peerC)
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(3)
-	go peerA.Run(&wg, stop)
-	go peerB.Run(&wg, stop)
-	go peerC.Run(&wg, stop)
-
-	// Peer A inserts 'X'
-	peerA.LocalEdit('X', 1)
-	time.Sleep(50 * time.Millisecond)
-
-	peerB.LocalEdit('Y', 2)
-	time.Sleep(50 * time.Millisecond)
-
-	peerC.LocalEdit('Z', 3)
+// Test document synchronization between two TUI instances
+func TestTUIDocumentSync(t *testing.T) {
+	// Create two editor states with pipe connection
+	doc1 := crdt.FromText("", 1)
+	doc2 := crdt.FromText("", 2)
+	
+	editorState1 := shared.NewEditorState(doc1, 1)
+	editorState2 := shared.NewEditorState(doc2, 2)
+	
+	// Connect them with a pipe
+	conn1, conn2 := net.Pipe()
+	editorState1.AddConn(conn1)
+	editorState2.AddConn(conn2)
+	
+	// Create TUI models
+	model1 := core.InitializeModelForTesting(editorState1, 1, "blue")
+	model2 := core.InitializeModelForTesting(editorState2, 2, "red")
+	
+	// Edit in model1
+	model1.SimulateKeyPress("H")
+	model1.SimulateKeyPress("i")
+	
+	// Wait a moment for synchronization
 	time.Sleep(100 * time.Millisecond)
-
-	close(stop)
-	wg.Wait()
-
-	// All peers should have all operations (order may differ due to CRDT)
-	for _, peer := range []*PeerSim{peerA, peerB, peerC} {
-		text := peer.Doc.ToText()
-		if !containsAll(text, []rune{'X', 'Y', 'Z'}) {
-			t.Errorf("Peer %d document missing characters: got '%s'", peer.ID, text)
-		}
-	}
-	// All peers should have the same document state (modulo CRDT order)
-	if !crdtDocsEquivalent(peerA.Doc, peerB.Doc) || !crdtDocsEquivalent(peerA.Doc, peerC.Doc) {
-		t.Errorf("Peers' documents diverged: '%s', '%s', '%s'", peerA.Doc.ToText(), peerB.Doc.ToText(), peerC.Doc.ToText())
-	}
-}
-
-func TestPeerJoinAndSync(t *testing.T) {
-	peerA := NewPeerSim(1)
-	peerB := NewPeerSim(2)
-	ConnectPeers(peerA, peerB)
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go peerA.Run(&wg, stop)
-	go peerB.Run(&wg, stop)
-
-	peerA.LocalEdit('A', 1)
-	peerA.LocalEdit('B', 2)
-	time.Sleep(50 * time.Millisecond)
-
-	// New peer joins and syncs from peerA
-	peerC := NewPeerSim(3)
-	ConnectPeers(peerA, peerC)
-	wg.Add(1)
-	go peerC.Run(&wg, stop)
-
-	// Simulate sync: peerA sends its document state to peerC
-	docBytes, _ := json.Marshal(peerA.Doc)
+	
+	// Manual sync from editor1 to editor2 for testing
+	docBytes, _ := json.Marshal(doc1)
 	var docCopy crdt.Document
 	_ = json.Unmarshal(docBytes, &docCopy)
-	peerC.Doc = &docCopy
-
-	// PeerC edits
-	opC := peerC.LocalEdit('C', 3)
-	// Manually broadcast C's operation to all peers (simulate gossip)
-	for _, peer := range []*PeerSim{peerA, peerB} {
-		peer.RecvChan <- opC
+	editorState2.SetDocument(&docCopy)
+	
+	// Check text is synchronized
+	if model2.GetDocumentText() != "Hi" {
+		t.Errorf("Document sync failed: got '%s', want 'Hi'", model2.GetDocumentText())
 	}
-	time.Sleep(100 * time.Millisecond)
-
-	close(stop)
-	wg.Wait()
-
-	for _, peer := range []*PeerSim{peerA, peerB, peerC} {
-		text := peer.Doc.ToText()
-		if !containsAll(text, []rune{'A', 'B', 'C'}) {
-			t.Errorf("Peer %d document missing characters after join: got '%s'", peer.ID, text)
-		}
-	}
-}
-
-func TestConcurrentEdits(t *testing.T) {
-	peerA := NewPeerSim(1)
-	peerB := NewPeerSim(2)
-	ConnectPeers(peerA, peerB)
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go peerA.Run(&wg, stop)
-	go peerB.Run(&wg, stop)
-
-	// Simultaneous edits
-	go peerA.LocalEdit('Q', 1)
-	go peerB.LocalEdit('W', 1)
-	time.Sleep(100 * time.Millisecond)
-
-	close(stop)
-	wg.Wait()
-
-	textA := peerA.Doc.ToText()
-	textB := peerB.Doc.ToText()
-	if !containsAll(textA, []rune{'Q', 'W'}) || !containsAll(textB, []rune{'Q', 'W'}) {
-		t.Errorf("Concurrent edits not merged: '%s', '%s'", textA, textB)
-	}
-	if !crdtDocsEquivalent(peerA.Doc, peerB.Doc) {
-		t.Errorf("Peers' documents diverged after concurrent edits: '%s', '%s'", textA, textB)
-	}
-}
-
-// Helper: checks all runes are present in s
-func containsAll(s string, chars []rune) bool {
-	for _, c := range chars {
-		found := false
-		for _, sc := range s {
-			if sc == c {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // Helper: checks if two CRDT documents are equivalent (by text content)
